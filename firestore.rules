@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function verified() { return request.auth != null && request.auth.token.email_verified == true; }
+  function owner(uid) { return verified() && request.auth.uid == uid; }
+  function professional() { return verified() && request.auth.token.professional == true; }
+  match /families/{uid} {
+   allow read, delete: if owner(uid);
+   allow create, update: if owner(uid) && request.resource.data.keys().hasOnly(['assessments','habits','draft'])
+     && request.resource.data.assessments is list && request.resource.data.assessments.size() <= 24
+     && request.resource.data.habits is map && request.resource.data.habits.size() <= 90
+     && request.resource.data.draft is string && request.resource.data.draft.size() <= 2000;
+  }
+  match /service/guidance { allow read: if true; allow write: if false; }
+  match /questions/{id} {
+   allow read: if verified() && (resource.data.ownerId == request.auth.uid || professional());
+   allow create: if verified()
+     && get(/databases/$(database)/documents/service/guidance).data.enabled == true
+     && request.resource.data.keys().hasOnly(['ownerId','question','guardianConsent','status','createdAt','reply','professionalId','repliedAt'])
+     && request.resource.data.ownerId == request.auth.uid
+     && request.resource.data.guardianConsent == true
+     && request.resource.data.question is string && request.resource.data.question.size() >= 20 && request.resource.data.question.size() <= 2000
+     && request.resource.data.status == 'pending' && request.resource.data.reply == '' && request.resource.data.professionalId == ''
+     && request.resource.data.createdAt == request.time && request.resource.data.repliedAt == null;
+   allow update: if professional() && resource.data.status == 'pending'
+     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reply','status','professionalId','repliedAt'])
+     && request.resource.data.reply is string && request.resource.data.reply.size() > 0 && request.resource.data.reply.size() <= 4000
+     && request.resource.data.status == 'answered' && request.resource.data.professionalId == request.auth.uid && request.resource.data.repliedAt == request.time;
+   allow delete: if owner(resource.data.ownerId);
+  }
+  match /{document=**} { allow read, write: if false; }
+ }
+}
